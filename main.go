@@ -4,15 +4,19 @@ import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"math/rand"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 type Request struct {
-	Vertex string `json:"vertex"`
-	Start  string `json:"start"`
-	End    string `json:"end"`
+	Vertex   string      `json:"vertex"`
+	Start    string      `json:"start"`
+	End      string      `json:"end"`
+	SubGraph interface{} `json:"subGraph"`
 }
 
 type Nodes []string
@@ -22,7 +26,11 @@ type Edge struct {
 	Node2 string `json:"node2"`
 }
 type Edges []Edge
-
+type Graph struct {
+	Nodes Nodes `json:"nodes"`
+	Edges Edges `json:"edges"`
+}
+type GraphMap map[string][]string
 type Html struct {
 	Table string `json:"table"`
 }
@@ -33,7 +41,7 @@ type IncidenceMatrix map[string][]int
 
 type DegreeCountsString map[string]string
 
-type Graph struct {
+type GraphResponse struct {
 	Nodes             []string           `json:"nodes"`
 	Edges             Edges              `json:"edges"`
 	IncidenceMatrix   IncidenceMatrix    `json:"incidenceMatrix"`
@@ -42,10 +50,12 @@ type Graph struct {
 	DegreeCounts      DegreeCountsString `json:"degreeCounts"`
 	Html              Html               `json:"html"`
 	SimplePath        string             `json:"simplePath"`
+	SubGraph          []Graph            `json:"subGraph"`
 }
 
 func filterInput(e string) (Nodes, Edges) {
 	//re := regexp.MustCompile(`/(\w+) *= *\(([^,]+), *([^)]+)\)/`)
+	e = strings.ReplaceAll(e, "\n", "")
 	re := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)`)
 	matches := re.FindAllStringSubmatch(e, -1)
 	// Crear un slice de aristas y un slice de nodos
@@ -63,7 +73,7 @@ func filterInput(e string) (Nodes, Edges) {
 	return nodes, edges
 }
 
-func startA(r Request) Graph {
+func startA(r Request) GraphResponse {
 
 	// Extraer las funciones de incidencia
 
@@ -77,7 +87,7 @@ func startA(r Request) Graph {
 	simplePath := edges.GetSimplePath(r.Start, r.End)
 
 	// Eliminar duplicados de nodos y ordenar alfabéticamente
-	nodes.uniqueStringsAndSort()
+	nodes = nodes.uniqueStringsAndSort()
 
 	// Crear matriz de incidencia
 	incidenceMatrix := nodes.getIncidenceMatrix(&edges)
@@ -104,7 +114,27 @@ func startA(r Request) Graph {
 	degreeCounts := incidenceMatrix.CalculateDegreeCounts()
 	//fmt.Println(degreeCounts)
 
-	return Graph{
+	graph := buildGraph(edges)
+	subgraph := make([]Graph, 2)
+	subGraphType := reflect.TypeOf(r.SubGraph).Kind()
+	//fmt.Println(subGraphType)
+	switch subGraphType {
+	case reflect.Array:
+		var n Nodes
+		for _, node := range r.SubGraph.([]string) {
+			n = append(n, node)
+		}
+		for i := range subgraph {
+			subgraph[i] = extractSubgraph(graph, n)
+		}
+
+	case reflect.Float64:
+		for i := range subgraph {
+			subgraph[i] = extractRandomSubgraph(graph, int(r.SubGraph.(float64)))
+		}
+	}
+
+	return GraphResponse{
 		Nodes:             nodes,
 		Edges:             edges,
 		IncidenceMatrix:   incidenceMatrix,
@@ -113,6 +143,7 @@ func startA(r Request) Graph {
 		DegreeCounts:      degreeCounts,
 		Html:              html,
 		SimplePath:        simplePath,
+		SubGraph:          subgraph,
 	}
 }
 
@@ -143,6 +174,127 @@ func main() {
 	logrus.Fatal(app.Listen(":3000"))
 }
 
+func fusionVertices(graph Graph, vertexA string, vertexB string) Graph {
+	// Crear un nuevo grafo para almacenar el resultado de la fusión
+	mergedGraph := Graph{
+		Nodes: make(Nodes, 0),
+		Edges: make(Edges, 0),
+	}
+
+	// Copiar los nodos del grafo original excepto los vértices fusionados
+	for _, node := range graph.Nodes {
+		if node != vertexA && node != vertexB {
+			mergedGraph.Nodes = append(mergedGraph.Nodes, node)
+		}
+	}
+
+	// Copiar las aristas del grafo original excepto las aristas incidentes en los vértices fusionados
+	for _, edge := range graph.Edges {
+		if edge.Node1 != vertexA && edge.Node1 != vertexB && edge.Node2 != vertexA && edge.Node2 != vertexB {
+			mergedGraph.Edges = append(mergedGraph.Edges, edge)
+		}
+	}
+
+	// Crear una nueva arista que conecte los vértices fusionados en el nuevo vértice
+	mergedEdge := Edge{
+		Id:    "merged",
+		Node1: vertexA,
+		Node2: vertexB,
+	}
+	mergedGraph.Edges = append(mergedGraph.Edges, mergedEdge)
+
+	// Agregar el nuevo vértice al grafo fusionado
+	mergedGraph.Nodes = append(mergedGraph.Nodes, "merged")
+
+	return mergedGraph
+}
+
+func buildGraph(edges Edges) Graph {
+	graph := Graph{
+		Nodes: Nodes{},
+		Edges: edges,
+	}
+
+	nodeSet := make(map[string]bool)
+	for _, edge := range edges {
+		nodeSet[edge.Node1] = true
+		nodeSet[edge.Node2] = true
+	}
+
+	for node := range nodeSet {
+		graph.Nodes = append(graph.Nodes, node)
+	}
+
+	return graph
+}
+
+func extractSubgraph(graph Graph, subGraphNodes []string) Graph {
+	subGraph := Graph{
+		Nodes: make([]string, 0),
+		Edges: make([]Edge, 0),
+	}
+
+	nodeSet := make(map[string]bool)
+	for _, node := range subGraphNodes {
+		nodeSet[node] = true
+	}
+
+	for _, edge := range graph.Edges {
+		if nodeSet[edge.Node1] && nodeSet[edge.Node2] {
+			subGraph.Edges = append(subGraph.Edges, edge)
+			nodeSet[edge.Node1] = true
+			nodeSet[edge.Node2] = true
+		}
+	}
+
+	for node := range nodeSet {
+		subGraph.Nodes = append(subGraph.Nodes, node)
+	}
+
+	return subGraph
+}
+
+func extractRandomSubgraph(graph Graph, numNodes int) Graph {
+	subgraphNodes := getRandomNodes(graph, numNodes)
+	fmt.Printf("nodes %v \n", subgraphNodes)
+	return extractSubgraph(graph, subgraphNodes)
+}
+
+func getRandomNodes(graph Graph, numNodes int) Nodes {
+	rand.Seed(time.Now().UnixNano())
+
+	// Obtener todos los nodos disponibles en el grafo
+	availableNodes := make(Nodes, len(graph.Nodes))
+	copy(availableNodes, graph.Nodes)
+
+	// Verificar si el número de nodos solicitados es mayor que el número total de nodos disponibles
+	if numNodes > len(availableNodes) {
+		numNodes = len(availableNodes)
+	}
+
+	// Elegir nodos aleatorios
+	randomNodes := make(Nodes, 0, numNodes)
+	for i := 0; i < numNodes; i++ {
+		randomIndex := rand.Intn(len(availableNodes))
+		randomNode := availableNodes[randomIndex]
+		randomNodes = append(randomNodes, randomNode)
+
+		// Eliminar el nodo aleatorio del conjunto de nodos disponibles
+		availableNodes = append(availableNodes[:randomIndex], availableNodes[randomIndex+1:]...)
+	}
+
+	return randomNodes
+}
+
+func contains(list Nodes, element string) bool {
+	for _, item := range list {
+		if item == element {
+			return true
+		}
+	}
+	return false
+}
+
 func (edges *Edges) GetSimplePath(start string, end string) string {
 	path := edges.findSimplePath(start, end)
 	var SimplePath string
@@ -167,7 +319,7 @@ func (incidenceMatrix *IncidenceMatrix) CalculateDegreeCounts() DegreeCountsStri
 	// Imprimir la lista de vértices y la cantidad de grados de cada vértice
 	//fmt.Println("Lista de vértices y grados:\n")
 	for node, degree := range degreeCounts {
-		degreeCountsString[node] = fmt.Sprintf("G(%s) = %d\n", node, degree)
+		degreeCountsString[node] = fmt.Sprintf("G(%s) = %d", node, degree)
 	}
 	return degreeCountsString
 
@@ -239,7 +391,7 @@ func (nodes *Nodes) getIncidenceMatrix(edges *Edges) IncidenceMatrix {
 	return incidenceMatrix
 }
 
-func (nodes *Nodes) uniqueStringsAndSort() *Nodes {
+func (nodes *Nodes) uniqueStringsAndSort() Nodes {
 	encountered := make(map[string]bool)
 	result := make(Nodes, 0)
 
@@ -251,11 +403,11 @@ func (nodes *Nodes) uniqueStringsAndSort() *Nodes {
 		}
 	}
 	sort.Strings(result)
-	return &result
+	return result
 }
 
 // Calcular la cantidad de grados de cada vértice
-func calculateDegree(graph map[string][]string) map[string]int {
+func calculateDegree(graph GraphMap) map[string]int {
 	degree := make(map[string]int)
 
 	for node, neighbors := range graph {
@@ -267,13 +419,10 @@ func calculateDegree(graph map[string][]string) map[string]int {
 
 // Función de búsqueda de camino simple
 func (edges *Edges) findSimplePath(start string, end string) []string {
-	graph := make(map[string][]string)
-
+	graph := make(GraphMap)
 	for _, edge := range *edges {
-		node1 := edge.Node1
-		node2 := edge.Node2
-		graph[node1] = append(graph[node1], node2)
-		graph[node2] = append(graph[node2], node1)
+		graph[edge.Node1] = append(graph[edge.Node1], edge.Node2)
+		graph[edge.Node2] = append(graph[edge.Node2], edge.Node1)
 	}
 
 	visited := make(map[string]bool)
@@ -305,7 +454,7 @@ func sum(arr []int) int {
 }
 
 // Función de búsqueda en profundidad (DFS)
-func dfs(graph map[string][]string, start string, end string, visited map[string]bool, path *[]string) bool {
+func dfs(graph GraphMap, start string, end string, visited map[string]bool, path *[]string) bool {
 	visited[start] = true
 	*path = append(*path, start)
 
