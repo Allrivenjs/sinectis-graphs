@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
+	"math"
 	"math/rand"
 	"reflect"
 	"regexp"
@@ -42,8 +43,7 @@ type IncidenceMatrix map[string][]int
 type DegreeCountsString map[string]string
 
 type GraphResponse struct {
-	Nodes             []string           `json:"nodes"`
-	Edges             Edges              `json:"edges"`
+	Graph             Graph              `json:"graph"`
 	IncidenceMatrix   IncidenceMatrix    `json:"incidenceMatrix"`
 	IncidenceFunction string             `json:"incidenceFunction"`
 	VertexList        string             `json:"vertexList"`
@@ -135,8 +135,7 @@ func startA(r Request) GraphResponse {
 	}
 
 	return GraphResponse{
-		Nodes:             nodes,
-		Edges:             edges,
+		Graph:             graph,
 		IncidenceMatrix:   incidenceMatrix,
 		IncidenceFunction: incidenceFunction,
 		VertexList:        vertexList,
@@ -169,9 +168,118 @@ func main() {
 		return c.JSON(startA(r))
 	})
 
+	app.Post("/distance-matrix", func(c *fiber.Ctx) error {
+		var graph Graph
+		err := c.BodyParser(&graph)
+		if err != nil {
+			return err
+		}
+		return c.JSON(distanceMatrix(graph))
+	})
+
 	//routes.SetupRoutes(app)
 	//app.Use(middlewares.RouteLogger(app))
 	logrus.Fatal(app.Listen(":3000"))
+}
+
+func distanceMatrix(graph Graph) [][]float64 {
+	numNodes := len(graph.Nodes)
+	matrix := initializeMatrix(numNodes)
+	setDiagonalZeros(matrix)
+	fillMatrixWithEdges(matrix, graph.Edges, graph.Nodes)
+	calculateShortestDistances(matrix)
+	return matrix
+}
+
+func initializeMatrix(size int) [][]float64 {
+	matrix := make([][]float64, size)
+	for i := 0; i < size; i++ {
+		matrix[i] = make([]float64, size)
+		for j := 0; j < size; j++ {
+			matrix[i][j] = math.Inf(1)
+		}
+	}
+	return matrix
+}
+
+func setDiagonalZeros(matrix [][]float64) {
+	for i := 0; i < len(matrix); i++ {
+		matrix[i][i] = 0
+	}
+}
+
+func fillMatrixWithEdges(matrix [][]float64, edges Edges, nodes Nodes) {
+	for _, edge := range edges {
+		index1 := getNodeIndex(nodes, edge.Node1)
+		index2 := getNodeIndex(nodes, edge.Node2)
+		matrix[index1][index2] = 1
+		matrix[index2][index1] = 1
+	}
+}
+
+func calculateShortestDistances(matrix [][]float64) {
+	size := len(matrix)
+	for k := 0; k < size; k++ {
+		for i := 0; i < size; i++ {
+			for j := 0; j < size; j++ {
+				if matrix[i][j] > matrix[i][k]+matrix[k][j] {
+					matrix[i][j] = matrix[i][k] + matrix[k][j]
+				}
+			}
+		}
+	}
+}
+
+//func distanceMatrix(graph Graph) [][]float64 {
+//	// Crear una matriz cuadrada para almacenar las distancias entre nodos
+//	numNodes := len(graph.Nodes)
+//	matrix := make([][]float64, numNodes)
+//	for i := 0; i < numNodes; i++ {
+//		matrix[i] = make([]float64, numNodes)
+//	}
+//
+//	// Inicializar la matriz con infinito para todas las distancias
+//	for i := 0; i < numNodes; i++ {
+//		for j := 0; j < numNodes; j++ {
+//			matrix[i][j] = math.Inf(1)
+//		}
+//	}
+//
+//	// Establecer la distancia cero para los nodos diagonales
+//	for i := 0; i < numNodes; i++ {
+//		matrix[i][i] = 0
+//	}
+//
+//	// Llenar la matriz con las distancias de las aristas existentes
+//	for _, edge := range graph.Edges {
+//		index1 := getNodeIndex(graph.Nodes, edge.Node1)
+//		index2 := getNodeIndex(graph.Nodes, edge.Node2)
+//		matrix[index1][index2] = 1
+//		matrix[index2][index1] = 1
+//	}
+//
+//	// Calcular las distancias mínimas utilizando el algoritmo de Floyd-Warshall
+//	for k := 0; k < numNodes; k++ {
+//		for i := 0; i < numNodes; i++ {
+//			for j := 0; j < numNodes; j++ {
+//				if matrix[i][j] > matrix[i][k]+matrix[k][j] {
+//					matrix[i][j] = matrix[i][k] + matrix[k][j]
+//				}
+//			}
+//		}
+//	}
+//
+//	return matrix
+//}
+
+// Función auxiliar para obtener el índice de un nodo en el slice de nodos
+func getNodeIndex(nodes Nodes, node string) int {
+	for i, n := range nodes {
+		if n == node {
+			return i
+		}
+	}
+	return -1
 }
 
 func fusionVertices(graph Graph, vertexA string, vertexB string) Graph {
