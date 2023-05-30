@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,9 +23,10 @@ type Request struct {
 
 type Nodes []string
 type Edge struct {
-	Id    string `json:"id"`
-	Node1 string `json:"node1"`
-	Node2 string `json:"node2"`
+	Id       string `json:"id"`
+	Node1    string `json:"node1"`
+	Node2    string `json:"node2"`
+	Weighted string `json:"weighted"`
 }
 type Edges []Edge
 type Graph struct {
@@ -53,19 +55,27 @@ type GraphResponse struct {
 	SubGraph          []Graph            `json:"subGraph"`
 }
 
+type Path struct {
+	Vertices []string
+	Length   float64
+}
+
 func filterInput(e string) (Nodes, Edges) {
 	//re := regexp.MustCompile(`/(\w+) *= *\(([^,]+), *([^)]+)\)/`)
 	e = strings.ReplaceAll(e, "\n", "")
-	re := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)`)
+	//re := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)`)
+	re := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)\s*\[([^]]+)\]`)
 	matches := re.FindAllStringSubmatch(e, -1)
 	// Crear un slice de aristas y un slice de nodos
 	var edges Edges
 	nodes := make(Nodes, 0)
+	logrus.Println(matches)
 	for _, match := range matches {
 		edge := Edge{
-			Id:    strings.TrimSpace(match[1]),
-			Node1: strings.TrimSpace(match[2]),
-			Node2: strings.TrimSpace(match[3]),
+			Id:       strings.TrimSpace(match[1]),
+			Node1:    strings.TrimSpace(match[2]),
+			Node2:    strings.TrimSpace(match[3]),
+			Weighted: strings.TrimSpace(match[4]),
 		}
 		edges = append(edges, edge)
 		nodes = append(nodes, strings.TrimSpace(match[2]), strings.TrimSpace(match[3]))
@@ -146,6 +156,16 @@ func startA(r Request) GraphResponse {
 	}
 }
 
+type RequestGraph struct {
+	Graph Graph `json:"graph"`
+}
+
+type RequestLength struct {
+	RequestGraph
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
 func main() {
 	//logrus.Infof("beginning application")
 	//err := godotenv.Load()
@@ -165,21 +185,159 @@ func main() {
 		if err != nil {
 			return err
 		}
+		if r == (Request{}) {
+			return c.SendString("No se recibió ningún dato")
+		}
 		return c.JSON(startA(r))
 	})
 
 	app.Post("/distance-matrix", func(c *fiber.Ctx) error {
-		var graph Graph
-		err := c.BodyParser(&graph)
+		var request RequestGraph
+		err := c.BodyParser(&request)
 		if err != nil {
 			return err
 		}
-		return c.JSON(distanceMatrix(graph))
+		if len(request.Graph.Nodes) == 0 {
+			// El campo request está vacío
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "El campo 'request' no puede estar vacío",
+			})
+		}
+
+		matrix := distanceMatrix(request.Graph)
+		tableHTML := formatMatrixAsHTMLTable(matrix, request.Graph.Nodes)
+
+		return c.SendString(tableHTML)
+	})
+
+	app.Post("/length", func(c *fiber.Ctx) error {
+		var request RequestLength
+		err := c.BodyParser(&request)
+		if err != nil {
+			return err
+		}
+		if len(request.Graph.Nodes) == 0 {
+			// El campo request está vacío
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "El campo 'request' no puede estar vacío",
+			})
+		}
+
+		length := getAllPaths(request.Graph, request.Start, request.End)
+
+		return c.JSON(length)
 	})
 
 	//routes.SetupRoutes(app)
 	//app.Use(middlewares.RouteLogger(app))
 	logrus.Fatal(app.Listen(":3000"))
+}
+
+func getAllPaths(graph Graph, start, end string) []string {
+	visited := make(map[string]bool)
+	var currentPath []string
+	var allPaths []string
+	var minLength = math.Inf(1)
+
+	findAllPaths(graph, start, end, visited, currentPath, &allPaths, &minLength)
+	index = 0
+
+	for _, path := range allPaths {
+		if length := getPathLengthFromFormat(path); length < minLength {
+			minLength = length
+		}
+	}
+
+	minLengthString := fmt.Sprintf("D(%s, %s) = min (CS) = %.2f KM", start, end, minLength)
+	allPaths = append(allPaths, minLengthString)
+
+	return allPaths
+}
+
+var index = 0
+
+func getPathLengthFromFormat(path string) float64 {
+	parts := strings.Split(path, " = ")
+	if len(parts) < 2 {
+		return math.Inf(1)
+	}
+
+	lengthStr := strings.TrimSpace(parts[len(parts)-1])
+	length, err := strconv.ParseFloat(lengthStr, 64)
+	if err != nil {
+		return math.Inf(1)
+	}
+
+	return length
+}
+
+func findAllPaths(graph Graph, current, end string, visited map[string]bool, currentPath []string, allPaths *[]string, minLength *float64) {
+	visited[current] = true
+	currentPath = append(currentPath, current)
+
+	if current == end {
+		*allPaths = append(*allPaths, formatPath(currentPath, graph))
+		if length := calculatePathLength(currentPath, graph); length < *minLength {
+			*minLength = length
+		}
+	} else {
+		for _, edge := range graph.Edges {
+			if edge.Node1 == current {
+				neighbor := edge.Node2
+				if !visited[neighbor] {
+					findAllPaths(graph, neighbor, end, visited, currentPath, allPaths, minLength)
+				}
+			} else if edge.Node2 == current {
+				neighbor := edge.Node1
+				if !visited[neighbor] {
+					findAllPaths(graph, neighbor, end, visited, currentPath, allPaths, minLength)
+				}
+			}
+		}
+	}
+
+	delete(visited, current)
+	currentPath = currentPath[:len(currentPath)-1]
+
+}
+
+func formatPath(path []string, graph Graph) string {
+	//formattedPath := strings.Join(path, " -> ")
+	length := calculatePathLength(path, graph)
+
+	result := fmt.Sprintf("CS%d: ", index+1)
+	for i := 0; i < len(path)-1; i++ {
+		node1 := path[i]
+		node2 := path[i+1]
+		for _, edge := range graph.Edges {
+			if (edge.Node1 == node1 && edge.Node2 == node2) || (edge.Node1 == node2 && edge.Node2 == node1) {
+				result += fmt.Sprintf("%s - %s - ", node1, edge.Id)
+				break
+			}
+		}
+	}
+	result += fmt.Sprintf("%s <-------> Longitud de CS%d = %f KM\n ", path[len(path)-1], index+1, length)
+	//return fmt.Sprintf("%s: %f", formattedPath, length)
+	index++
+	return result
+}
+
+func calculatePathLength(path []string, graph Graph) float64 {
+	length := 0.0
+	for i := 0; i < len(path)-1; i++ {
+		node1 := path[i]
+		node2 := path[i+1]
+		for _, edge := range graph.Edges {
+			if (edge.Node1 == node1 && edge.Node2 == node2) || (edge.Node1 == node2 && edge.Node2 == node1) {
+				weighted, err := strconv.ParseFloat(edge.Weighted, 64)
+				if err == nil {
+					length += weighted
+				}
+				break
+			}
+		}
+	}
+	return length
 }
 
 func distanceMatrix(graph Graph) [][]float64 {
@@ -189,6 +347,34 @@ func distanceMatrix(graph Graph) [][]float64 {
 	fillMatrixWithEdges(matrix, graph.Edges, graph.Nodes)
 	calculateShortestDistances(matrix)
 	return matrix
+}
+
+func formatMatrixAsHTMLTable(matrix [][]float64, nodes Nodes) string {
+	var sb strings.Builder
+
+	sb.WriteString("<table>")
+	sb.WriteString("<tr><th></th>") // Encabezado de la tabla (nombres de los nodos)
+	for _, node := range nodes {
+		sb.WriteString("<th>")
+		sb.WriteString(node)
+		sb.WriteString("</th>")
+	}
+	sb.WriteString("</tr>")
+	for i, row := range matrix {
+		sb.WriteString("<tr>")
+		sb.WriteString("<th>")
+		sb.WriteString(nodes[i])
+		sb.WriteString("</th>")
+		for _, value := range row {
+			sb.WriteString("<td>")
+			sb.WriteString(fmt.Sprintf("%.2f", value))
+			sb.WriteString("</td>")
+		}
+		sb.WriteString("</tr>")
+	}
+	sb.WriteString("</table>")
+
+	return sb.String()
 }
 
 func initializeMatrix(size int) [][]float64 {
@@ -210,10 +396,19 @@ func setDiagonalZeros(matrix [][]float64) {
 
 func fillMatrixWithEdges(matrix [][]float64, edges Edges, nodes Nodes) {
 	for _, edge := range edges {
-		index1 := getNodeIndex(nodes, edge.Node1)
-		index2 := getNodeIndex(nodes, edge.Node2)
-		matrix[index1][index2] = 1
-		matrix[index2][index1] = 1
+		node1 := getNodeIndex(nodes, edge.Node1)
+		node2 := getNodeIndex(nodes, edge.Node2)
+		weighted, err := strconv.ParseFloat(edge.Weighted, 64)
+		if err != nil {
+			// Handle the error if the conversion fails
+			logrus.Fatal(err)
+			// You can choose to skip this edge or assign a default value
+			continue
+		}
+		matrix[node1][node2] = weighted
+		matrix[node2][node1] = weighted
+		//matrix[index1][index2] = 1
+		//matrix[index2][index1] = 1
 	}
 }
 
