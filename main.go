@@ -223,14 +223,108 @@ func main() {
 			})
 		}
 
-		length := getAllPaths(request.Graph, request.Start, request.End)
+		excentricity := findAllExcentricity(request.Graph, request.Start)
 
-		return c.JSON(length)
+		length := getAllPaths(request.Graph, request.Start, request.End)
+		return c.JSON(fiber.Map{
+			"length":       length,
+			"excentricity": excentricity,
+		})
 	})
 
 	//routes.SetupRoutes(app)
 	//app.Use(middlewares.RouteLogger(app))
 	logrus.Fatal(app.Listen(":3000"))
+}
+
+func parseFloatWeighted(edge Edge) (float64, error) {
+	weightedStr := strings.ReplaceAll(edge.Weighted, ",", ".")
+	return strconv.ParseFloat(weightedStr, 64)
+}
+
+func findAllExcentricity(graph Graph, vertex string) []string {
+	var excentricities []string
+	var maxExcentricity float64
+	var maxVertex string
+
+	for _, node := range graph.Nodes {
+		excentricity := calculateExcentricity(graph, vertex, node)
+		if excentricity > maxExcentricity {
+			maxExcentricity = excentricity
+			maxVertex = vertex
+		}
+		result := formatExcentricity(node, vertex, excentricity)
+		excentricities = append(excentricities, result)
+	}
+
+	result := fmt.Sprintf("La Distancia más alta que sería D (%s) cuyo valor es de %.2f el cual es el valor de excentricidad del vértice %s, E(%s) = %.2f.",
+		maxVertex, maxExcentricity, maxVertex, maxVertex, maxExcentricity)
+	excentricities = append(excentricities, result)
+
+	return excentricities
+}
+
+func formatExcentricity(node string, vertex string, excentricity float64) string {
+	result := fmt.Sprintf("E(%s,%s) = %.2f", vertex, node, excentricity)
+	return result
+}
+
+func calculateExcentricity(graph Graph, vertex, node string) float64 {
+	distance := calculateShortestDistance(graph, vertex, node)
+	return distance
+}
+
+func calculateShortestDistance(graph Graph, start, end string) float64 {
+	distances := make(map[string]float64)
+	for _, node := range graph.Nodes {
+		distances[node] = math.Inf(1)
+	}
+	distances[start] = 0
+
+	queue := []string{start}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current == end {
+			return distances[current]
+		}
+
+		for _, edge := range graph.Edges {
+			if edge.Node1 == current {
+				neighbor := edge.Node2
+				weight, err := parseFloatWeighted(edge)
+				if err != nil {
+					// Manejar el error si la conversión falla
+					logrus.Fatal(err)
+					// Puedes optar por omitir esta arista o asignar un valor predeterminado
+					continue
+				}
+				alt := distances[current] + weight
+				if alt < distances[neighbor] {
+					distances[neighbor] = alt
+					queue = append(queue, neighbor)
+				}
+			} else if edge.Node2 == current {
+				neighbor := edge.Node1
+				weight, err := parseFloatWeighted(edge)
+				if err != nil {
+					// Manejar el error si la conversión falla
+					logrus.Fatal(err)
+					// Puedes optar por omitir esta arista o asignar un valor predeterminado
+					continue
+				}
+				alt := distances[current] + weight
+				if alt < distances[neighbor] {
+					distances[neighbor] = alt
+					queue = append(queue, neighbor)
+				}
+			}
+		}
+	}
+
+	return math.Inf(1)
 }
 
 func getAllPaths(graph Graph, start, end string) []string {
@@ -352,7 +446,7 @@ func distanceMatrix(graph Graph) [][]float64 {
 func formatMatrixAsHTMLTable(matrix [][]float64, nodes Nodes) string {
 	var sb strings.Builder
 
-	sb.WriteString("<table>")
+	sb.WriteString("<style>table, th, td {\n  border: 1px solid;\n} td, th {\npadding: 2px;\n}</style><table style='border-collapse: collapse;'>")
 	sb.WriteString("<tr><th></th>") // Encabezado de la tabla (nombres de los nodos)
 	for _, node := range nodes {
 		sb.WriteString("<th>")
@@ -365,9 +459,14 @@ func formatMatrixAsHTMLTable(matrix [][]float64, nodes Nodes) string {
 		sb.WriteString("<th>")
 		sb.WriteString(nodes[i])
 		sb.WriteString("</th>")
-		for _, value := range row {
-			sb.WriteString("<td>")
-			sb.WriteString(fmt.Sprintf("%.2f", value))
+		for j, value := range row {
+			cell := fmt.Sprintf("%.2f", value)
+			if i == j {
+				sb.WriteString("<td style='background-color: yellow;'>")
+			} else {
+				sb.WriteString("<td>")
+			}
+			sb.WriteString(cell)
 			sb.WriteString("</td>")
 		}
 		sb.WriteString("</tr>")
@@ -395,21 +494,80 @@ func setDiagonalZeros(matrix [][]float64) {
 }
 
 func fillMatrixWithEdges(matrix [][]float64, edges Edges, nodes Nodes) {
+	nodeIndex := make(map[string]int)
+	for i, node := range nodes {
+		nodeIndex[node] = i
+	}
+
+	// Inicializar todas las distancias con Infinito
+	for i := 0; i < len(matrix); i++ {
+		for j := 0; j < len(matrix); j++ {
+			matrix[i][j] = math.Inf(1)
+		}
+	}
+
+	// Asignar las distancias entre nodos vecinos
 	for _, edge := range edges {
-		node1 := getNodeIndex(nodes, edge.Node1)
-		node2 := getNodeIndex(nodes, edge.Node2)
-		weighted, err := strconv.ParseFloat(edge.Weighted, 64)
+		node1 := nodeIndex[edge.Node1]
+		node2 := nodeIndex[edge.Node2]
+		weighted, err := parseFloatWeighted(edge)
 		if err != nil {
-			// Handle the error if the conversion fails
+			// Manejar el error si la conversión falla
 			logrus.Fatal(err)
-			// You can choose to skip this edge or assign a default value
+			// Puedes optar por omitir esta arista o asignar un valor predeterminado
 			continue
 		}
 		matrix[node1][node2] = weighted
 		matrix[node2][node1] = weighted
-		//matrix[index1][index2] = 1
-		//matrix[index2][index1] = 1
 	}
+
+	// Calcular las distancias mínimas utilizando el algoritmo de Dijkstra
+	for i := 0; i < len(matrix); i++ {
+		dijkstra(matrix, i)
+	}
+}
+
+func dijkstra(matrix [][]float64, start int) {
+	size := len(matrix)
+	visited := make([]bool, size)
+	distances := make([]float64, size)
+
+	// Inicializar todas las distancias con Infinito excepto el nodo de inicio
+	for i := 0; i < size; i++ {
+		distances[i] = math.Inf(1)
+	}
+	distances[start] = 0
+
+	// Encontrar el nodo con la distancia mínima en cada iteración
+	for count := 0; count < size-1; count++ {
+		u := minDistance(distances, visited)
+		visited[u] = true
+
+		// Actualizar las distancias de los nodos adyacentes
+		for v := 0; v < size; v++ {
+			if !visited[v] && matrix[u][v] != math.Inf(1) && distances[u]+matrix[u][v] < distances[v] {
+				distances[v] = distances[u] + matrix[u][v]
+			}
+		}
+	}
+
+	// Asignar las distancias mínimas a la matriz de distancia
+	for i := 0; i < size; i++ {
+		matrix[start][i] = distances[i]
+		matrix[i][start] = distances[i]
+	}
+}
+
+func minDistance(distances []float64, visited []bool) int {
+	min := math.Inf(1)
+	minIndex := -1
+	for i, distance := range distances {
+		if !visited[i] && distance < min {
+			min = distance
+			minIndex = i
+		}
+	}
+	return minIndex
 }
 
 func calculateShortestDistances(matrix [][]float64) {
