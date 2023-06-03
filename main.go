@@ -21,12 +21,18 @@ type Request struct {
 	SubGraph interface{} `json:"subGraph"`
 }
 
+type Position struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
 type Nodes []string
 type Edge struct {
-	Id       string `json:"id"`
-	Node1    string `json:"node1"`
-	Node2    string `json:"node2"`
-	Weighted string `json:"weighted"`
+	Id       string   `json:"id"`
+	Node1    string   `json:"node1"`
+	Node2    string   `json:"node2"`
+	Weighted string   `json:"weighted"`
+	Position Position `json:"position"`
 }
 type Edges []Edge
 type Graph struct {
@@ -63,19 +69,22 @@ type Path struct {
 func filterInput(e string) (Nodes, Edges) {
 	//re := regexp.MustCompile(`/(\w+) *= *\(([^,]+), *([^)]+)\)/`)
 	e = strings.ReplaceAll(e, "\n", "")
-	//re := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)`)
+	re2 := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)`)
 	re := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)\s*\[([^]]+)\]`)
 	matches := re.FindAllStringSubmatch(e, -1)
+	if len(matches) == 0 {
+		matches = re2.FindAllStringSubmatch(e, -1)
+	}
 	// Crear un slice de aristas y un slice de nodos
 	var edges Edges
 	nodes := make(Nodes, 0)
 	logrus.Println(matches)
 	for _, match := range matches {
 		edge := Edge{
-			Id:       strings.TrimSpace(match[1]),
-			Node1:    strings.TrimSpace(match[2]),
-			Node2:    strings.TrimSpace(match[3]),
-			Weighted: strings.TrimSpace(match[4]),
+			Id:    strings.TrimSpace(match[1]),
+			Node1: strings.TrimSpace(match[2]),
+			Node2: strings.TrimSpace(match[3]),
+			//Weighted: strings.TrimSpace(match[4]),
 		}
 		edges = append(edges, edge)
 		nodes = append(nodes, strings.TrimSpace(match[2]), strings.TrimSpace(match[3]))
@@ -188,6 +197,7 @@ func main() {
 		if r == (Request{}) {
 			return c.SendString("No se recibió ningún dato")
 		}
+		logrus.Infof("Request: %+v", r)
 		return c.JSON(startA(r))
 	})
 
@@ -205,7 +215,7 @@ func main() {
 		}
 
 		matrix := distanceMatrix(request.Graph)
-		tableHTML := formatMatrixAsHTMLTable(matrix, request.Graph.Nodes)
+		tableHTML := formatMatrixAsHTMLTable(matrix, request.Graph.Nodes, false)
 
 		return c.SendString(tableHTML)
 	})
@@ -223,18 +233,308 @@ func main() {
 			})
 		}
 
-		excentricity := findAllExcentricity(request.Graph, request.Start)
-
+		excentricity, excentricityMatrix := findAllExcentricity(request.Graph, request.Start)
+		htmlTable := formatMatrixAsHTMLTable(excentricityMatrix, request.Graph.Nodes, true)
 		length := getAllPaths(request.Graph, request.Start, request.End)
+		//logrus.Println(length, excentricity, table)
 		return c.JSON(fiber.Map{
-			"length":       length,
-			"excentricity": excentricity,
+			"length": length,
+			"excentricity": fiber.Map{
+				"list":  excentricity,
+				"table": htmlTable,
+			},
 		})
+		//return c.SendString(table)
+	})
+
+	app.Post("/center-radio-diametro", func(c *fiber.Ctx) error {
+		var request RequestLength
+		err := c.BodyParser(&request)
+		if err != nil {
+			return err
+		}
+		if len(request.Graph.Nodes) == 0 {
+			// El campo request está vacío
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "El campo 'request' no puede estar vacío",
+			})
+		}
+		center, min, list := findGraphCenter(request.Graph)
+		radio := findGraphRadius(request.Graph, min)
+		diametro := calculateDiameter(request.Graph)
+		return c.JSON(fiber.Map{
+			"center":   center,
+			"radio":    radio,
+			"diametro": diametro,
+			"list":     list,
+		})
+	})
+
+	app.Post("/dijkstra-matrix", func(c *fiber.Ctx) error {
+		var request RequestLength
+		err := c.BodyParser(&request)
+		if err != nil {
+			return err
+		}
+		if len(request.Graph.Nodes) == 0 {
+			// El campo request está vacío
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"message": "El campo 'request' no puede estar vacío",
+			})
+		}
+
+		//distances, paths := Dijkstra(request.Graph, request.Start)
+		//logrus.Println(distances, paths)
+		//formatShortestPaths(distances, paths, request.Start)
+
+		numNodes := len(request.Graph.Nodes)
+		matrix := initializeMatrix(numNodes)
+		matrix = setDiagonalZeros(matrix)
+		index = getIndex(request.Start, request.Graph.Nodes)
+
+		d, p := fillMatrixWithEdges(matrix, request.Graph.Edges, request.Graph.Nodes, index)
+
+		// Calcular el número medio de enlaces
+		size := len(d)
+		averageLinks := calculateAverageLinks(d, size)
+		logrus.Println(averageLinks)
+		return c.JSON(fiber.Map{
+			"matrix":        formatShortestPaths(d, p, index, request.Graph.Nodes),
+			"average_links": fmt.Sprintf("El número medio de enlaces que un paquete tiene que atravesar (en promedio) es: %v", averageLinks),
+		})
+		//return c.SendString(formatShortestPaths(d, p, index, request.Graph.Nodes))
 	})
 
 	//routes.SetupRoutes(app)
 	//app.Use(middlewares.RouteLogger(app))
+
 	logrus.Fatal(app.Listen(":3000"))
+}
+
+func getIndex(node string, nodes []string) int {
+	for i, n := range nodes {
+		if n == node {
+			return i
+		}
+	}
+	return -1
+}
+
+func calculateAverageLinks(distances []float64, size int) float64 {
+	totalDistance := 0.0
+	totalPairs := 0
+
+	for i := 0; i < size; i++ {
+		for j := i + 1; j < size; j++ {
+			if distances[i] != math.Inf(1) && distances[j] != math.Inf(1) {
+				totalDistance += distances[j]
+				totalPairs++
+			}
+		}
+	}
+
+	if totalPairs > 0 {
+		averageLinks := totalDistance / float64(totalPairs)
+		return averageLinks
+	}
+
+	return 0.0
+}
+
+func dijkstra(matrix [][]float64, start int) ([]float64, map[int][]int) {
+	size := len(matrix)
+	visited := make([]bool, size)
+	distances := make([]float64, size)
+	paths := make(map[int][]int)
+
+	// Inicializar todas las distancias con Infinito excepto el nodo de inicio
+	for i := 0; i < size; i++ {
+		distances[i] = math.Inf(1)
+		paths[i] = []int{}
+	}
+	distances[start] = 0
+	paths[start] = []int{start}
+
+	// Encontrar el nodo con la distancia mínima en cada iteración
+	for count := 0; count < size-1; count++ {
+		u := MinDistance(distances, visited)
+		visited[u] = true
+
+		// Actualizar las distancias de los nodos adyacentes
+		for v := 0; v < size; v++ {
+			if !visited[v] && matrix[u][v] != math.Inf(1) && distances[u]+matrix[u][v] < distances[v] {
+				distances[v] = distances[u] + matrix[u][v]
+				//logrus.Infof("distances[%d] = %f", v, distances[v])
+				paths[v] = append(paths[u], v)
+				//logrus.Infof("paths[%d] = %v", v, paths[v])
+			}
+		}
+	}
+	// Asignar las distancias mínimas a la matriz de distancia
+	for i := 0; i < size; i++ {
+		matrix[start][i] = distances[i]
+		matrix[i][start] = distances[i]
+	}
+	return distances, paths
+}
+
+func formatShortestPaths(distance []float64, path map[int][]int, startNode int, nodes Nodes) string {
+
+	var formattedPaths strings.Builder
+
+	var formartPath = func(path []int) string {
+		var formattedPath strings.Builder
+		for i, node := range path {
+			if i == 0 {
+				formattedPath.WriteString(nodes[node])
+			} else {
+				formattedPath.WriteString(fmt.Sprintf(" -> %s", nodes[node]))
+			}
+		}
+		return formattedPath.String()
+	}
+
+	// Construir la tabla HTML
+	formattedPaths.WriteString("<style>table, th, td {\n  border: 1px solid;\n} td, th {\npadding: 2px;\n}</style><table style='border-collapse: collapse;'>")
+	formattedPaths.WriteString("<tr>")
+	formattedPaths.WriteString("<th>Nodo Origen</th>")
+	formattedPaths.WriteString("<th>Nodo Destino</th>")
+	formattedPaths.WriteString("<th>Distancia Mínima</th>")
+	formattedPaths.WriteString("<th>Recorrido</th>")
+	formattedPaths.WriteString("</tr>")
+	for i, node := range nodes {
+		if i != startNode {
+			formattedPaths.WriteString(fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%.2f</td><td>%s</td></tr>\n", nodes[startNode], node, distance[i], formartPath(path[i])))
+		}
+	}
+
+	//formattedPaths.WriteString(fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%.2f</td><td>%s</td></tr>\n", nodes[i], nodes[j], distance, resultMatrix[i][j]))
+
+	formattedPaths.WriteString("</table>")
+
+	return formattedPaths.String()
+}
+
+//func Dijkstra(graph Graph, source string) ([][]string, [][]float64) {
+//	// Inicializar las distancias y rutas más cortas
+//	size := len(graph.Nodes)
+//	distances := make([][]float64, size)
+//	resultMatrix := make([][]string, size)
+//
+//	for i := 0; i < size; i++ {
+//		distances[i] = make([]float64, size)
+//		resultMatrix[i] = make([]string, size)
+//		for j := 0; j < size; j++ {
+//			distances[i][j] = math.Inf(1)
+//			resultMatrix[i][j] = "-"
+//		}
+//	}
+//
+//	// Asignar las distancias de los enlaces conocidos
+//	for _, edge := range graph.Edges {
+//		node1Index := getNodeIndex(graph.Nodes, edge.Node1)
+//		node2Index := getNodeIndex(graph.Nodes, edge.Node2)
+//		weight := parseWeight(edge.Weighted)
+//
+//		distances[node1Index][node2Index] = weight
+//		distances[node2Index][node1Index] = weight
+//		resultMatrix[node1Index][node2Index] = edge.Id
+//		resultMatrix[node2Index][node1Index] = edge.Id
+//	}
+//
+//	// Inicializar la distancia al nodo fuente como 0
+//	sourceIndex := getNodeIndex(graph.Nodes, source)
+//	distances[sourceIndex][sourceIndex] = 0
+//
+//	// Conjunto de nodos visitados
+//	visited := make([]bool, size)
+//
+//	// Iterar hasta visitar todos los nodos
+//	for count := 0; count < size; count++ {
+//		// Encontrar el nodo con la distancia mínima
+//		u := MinDistance(distances, visited)
+//
+//		// Marcar el nodo como visitado
+//		visited[u] = true
+//
+//		// Actualizar las distancias de los nodos adyacentes
+//		for v := 0; v < size; v++ {
+//			if !visited[v] && distances[u][v] != math.Inf(1) && distances[u][v]+distances[u][u] < distances[u][v] {
+//				distances[u][v] = distances[u][v] + distances[u][u]
+//				resultMatrix[u][v] = resultMatrix[u][u] + "->" + graph.Nodes[v]
+//			}
+//		}
+//	}
+//
+//	return resultMatrix, distances
+//}
+
+func parseWeight(weighted string) float64 {
+	// Aquí puedes implementar la lógica para convertir el peso según tu necesidad
+	// En este ejemplo, se asume que el peso es un número decimal
+	weight, _ := strconv.ParseFloat(weighted, 64)
+	return weight
+}
+
+func calculateDiameter(graph Graph) float64 {
+	diameter := 0.0
+
+	for i := 0; i < len(graph.Nodes); i++ {
+		for j := i + 1; j < len(graph.Nodes); j++ {
+			distance := calculateShortestDistance(graph, graph.Nodes[i], graph.Nodes[j])
+			if distance > diameter {
+				diameter = distance
+			}
+		}
+	}
+
+	return diameter
+}
+
+func findGraphRadius(graph Graph, centerExcentricity float64) float64 {
+	radius := math.Inf(1)
+	for _, vertex := range graph.Nodes {
+		excentricity := calculateExcentricity(graph, vertex)
+		if excentricity == centerExcentricity && excentricity < radius {
+			radius = excentricity
+		}
+	}
+
+	return radius
+}
+
+func findGraphCenter(graph Graph) (string, float64, []string) {
+	minExcentricity := math.Inf(1)
+	var centerVertex string
+	excentricities := []string{}
+
+	for _, vertex := range graph.Nodes {
+		excentricity := calculateExcentricity(graph, vertex)
+		result := fmt.Sprintf("E(%s) = %.2f", vertex, excentricity)
+		excentricities = append(excentricities, result)
+
+		if excentricity < minExcentricity {
+			minExcentricity = excentricity
+			centerVertex = vertex
+		}
+	}
+	centerResult := fmt.Sprintf("Vértice que posee la menor excentricidad E(%s) = %.2f", centerVertex, minExcentricity)
+	excentricities = append(excentricities, centerResult)
+
+	return centerVertex, minExcentricity, excentricities
+
+}
+
+func getMaxExcentricity(row []float64) float64 {
+	maxExcentricity := math.Inf(-1)
+
+	for _, excentricity := range row {
+		if excentricity > maxExcentricity {
+			maxExcentricity = excentricity
+		}
+	}
+
+	return maxExcentricity
 }
 
 func parseFloatWeighted(edge Edge) (float64, error) {
@@ -242,26 +542,29 @@ func parseFloatWeighted(edge Edge) (float64, error) {
 	return strconv.ParseFloat(weightedStr, 64)
 }
 
-func findAllExcentricity(graph Graph, vertex string) []string {
+func findAllExcentricity(graph Graph, vertex string) ([]string, [][]float64) {
 	var excentricities []string
 	var maxExcentricity float64
+	var excentricityMatrix [][]float64
 	var maxVertex string
 
 	for _, node := range graph.Nodes {
-		excentricity := calculateExcentricity(graph, vertex, node)
+		excentricity := calculateExcentricityForVertex(graph, vertex, node)
 		if excentricity > maxExcentricity {
 			maxExcentricity = excentricity
 			maxVertex = vertex
 		}
 		result := formatExcentricity(node, vertex, excentricity)
 		excentricities = append(excentricities, result)
+		excentricityRow := []float64{excentricity}
+		excentricityMatrix = append(excentricityMatrix, excentricityRow)
 	}
 
 	result := fmt.Sprintf("La Distancia más alta que sería D (%s) cuyo valor es de %.2f el cual es el valor de excentricidad del vértice %s, E(%s) = %.2f.",
 		maxVertex, maxExcentricity, maxVertex, maxVertex, maxExcentricity)
 	excentricities = append(excentricities, result)
 
-	return excentricities
+	return excentricities, excentricityMatrix
 }
 
 func formatExcentricity(node string, vertex string, excentricity float64) string {
@@ -269,7 +572,22 @@ func formatExcentricity(node string, vertex string, excentricity float64) string
 	return result
 }
 
-func calculateExcentricity(graph Graph, vertex, node string) float64 {
+func calculateExcentricity(graph Graph, vertex string) float64 {
+	var maxDistance float64
+
+	for _, targetNode := range graph.Nodes {
+		if targetNode != vertex {
+			distance := calculateShortestDistance(graph, vertex, targetNode)
+			if distance > maxDistance {
+				maxDistance = distance
+			}
+		}
+	}
+
+	return maxDistance
+}
+
+func calculateExcentricityForVertex(graph Graph, vertex, node string) float64 {
 	distance := calculateShortestDistance(graph, vertex, node)
 	return distance
 }
@@ -437,28 +755,39 @@ func calculatePathLength(path []string, graph Graph) float64 {
 func distanceMatrix(graph Graph) [][]float64 {
 	numNodes := len(graph.Nodes)
 	matrix := initializeMatrix(numNodes)
-	setDiagonalZeros(matrix)
-	fillMatrixWithEdges(matrix, graph.Edges, graph.Nodes)
-	calculateShortestDistances(matrix)
+	matrix = setDiagonalZeros(matrix)
+	fillMatrixWithEdges(matrix, graph.Edges, graph.Nodes, -1)
 	return matrix
 }
 
-func formatMatrixAsHTMLTable(matrix [][]float64, nodes Nodes) string {
+func formatMatrixAsHTMLTable(matrix [][]float64, nodes Nodes, list bool) string {
 	var sb strings.Builder
 
 	sb.WriteString("<style>table, th, td {\n  border: 1px solid;\n} td, th {\npadding: 2px;\n}</style><table style='border-collapse: collapse;'>")
-	sb.WriteString("<tr><th></th>") // Encabezado de la tabla (nombres de los nodos)
-	for _, node := range nodes {
+	// Encabezado de la tabla (nombres de los nodos)
+
+	if list {
+		sb.WriteString("<tr><th>Vértice</th>")
 		sb.WriteString("<th>")
-		sb.WriteString(node)
+		sb.WriteString("Exec(Vi)")
 		sb.WriteString("</th>")
+	} else {
+		sb.WriteString("<tr><th></th>")
+		for _, node := range nodes {
+			sb.WriteString("<th>")
+			sb.WriteString(node)
+			sb.WriteString("</th>")
+		}
 	}
+
 	sb.WriteString("</tr>")
 	for i, row := range matrix {
 		sb.WriteString("<tr>")
+
 		sb.WriteString("<th>")
 		sb.WriteString(nodes[i])
 		sb.WriteString("</th>")
+
 		for j, value := range row {
 			cell := fmt.Sprintf("%.2f", value)
 			if i == j {
@@ -487,24 +816,39 @@ func initializeMatrix(size int) [][]float64 {
 	return matrix
 }
 
-func setDiagonalZeros(matrix [][]float64) {
+func setDiagonalZeros(matrix [][]float64) [][]float64 {
 	for i := 0; i < len(matrix); i++ {
 		matrix[i][i] = 0
 	}
+	return matrix
 }
 
-func fillMatrixWithEdges(matrix [][]float64, edges Edges, nodes Nodes) {
+func initMatrixInf(matrix [][]float64) [][]float64 {
+	for i := 0; i < len(matrix); i++ {
+		for j := 0; j < len(matrix); j++ {
+			matrix[i][j] = math.Inf(1)
+		}
+	}
+	return matrix
+}
+
+//func findShortestPaths(graph Graph, vertex string) string {
+//	// Obtener el índice del vértice en el grafo
+//	numNodes := len(graph.Nodes)
+//	matrix := initializeMatrix(numNodes)
+//	setDiagonalZeros(matrix)
+//	//formattedPaths := fillMatrixWithEdges(matrix, graph.Edges, graph.Nodes)
+//	//return formattedPaths
+//}
+
+func fillMatrixWithEdges(matrix [][]float64, edges Edges, nodes Nodes, startNode int) ([]float64, map[int][]int) {
 	nodeIndex := make(map[string]int)
 	for i, node := range nodes {
 		nodeIndex[node] = i
 	}
 
 	// Inicializar todas las distancias con Infinito
-	for i := 0; i < len(matrix); i++ {
-		for j := 0; j < len(matrix); j++ {
-			matrix[i][j] = math.Inf(1)
-		}
-	}
+	matrix = initMatrixInf(matrix)
 
 	// Asignar las distancias entre nodos vecinos
 	for _, edge := range edges {
@@ -520,45 +864,19 @@ func fillMatrixWithEdges(matrix [][]float64, edges Edges, nodes Nodes) {
 		matrix[node1][node2] = weighted
 		matrix[node2][node1] = weighted
 	}
-
-	// Calcular las distancias mínimas utilizando el algoritmo de Dijkstra
-	for i := 0; i < len(matrix); i++ {
-		dijkstra(matrix, i)
-	}
-}
-
-func dijkstra(matrix [][]float64, start int) {
-	size := len(matrix)
-	visited := make([]bool, size)
-	distances := make([]float64, size)
-
-	// Inicializar todas las distancias con Infinito excepto el nodo de inicio
-	for i := 0; i < size; i++ {
-		distances[i] = math.Inf(1)
-	}
-	distances[start] = 0
-
-	// Encontrar el nodo con la distancia mínima en cada iteración
-	for count := 0; count < size-1; count++ {
-		u := minDistance(distances, visited)
-		visited[u] = true
-
-		// Actualizar las distancias de los nodos adyacentes
-		for v := 0; v < size; v++ {
-			if !visited[v] && matrix[u][v] != math.Inf(1) && distances[u]+matrix[u][v] < distances[v] {
-				distances[v] = distances[u] + matrix[u][v]
-			}
+	var d []float64
+	var p map[int][]int
+	if startNode == -1 {
+		for i := 0; i < len(matrix); i++ {
+			dijkstra(matrix, i)
 		}
+	} else {
+		d, p = dijkstra(matrix, startNode)
 	}
-
-	// Asignar las distancias mínimas a la matriz de distancia
-	for i := 0; i < size; i++ {
-		matrix[start][i] = distances[i]
-		matrix[i][start] = distances[i]
-	}
+	return d, p
 }
 
-func minDistance(distances []float64, visited []bool) int {
+func MinDistance(distances []float64, visited []bool) int {
 	min := math.Inf(1)
 	minIndex := -1
 	for i, distance := range distances {
@@ -569,61 +887,6 @@ func minDistance(distances []float64, visited []bool) int {
 	}
 	return minIndex
 }
-
-func calculateShortestDistances(matrix [][]float64) {
-	size := len(matrix)
-	for k := 0; k < size; k++ {
-		for i := 0; i < size; i++ {
-			for j := 0; j < size; j++ {
-				if matrix[i][j] > matrix[i][k]+matrix[k][j] {
-					matrix[i][j] = matrix[i][k] + matrix[k][j]
-				}
-			}
-		}
-	}
-}
-
-//func distanceMatrix(graph Graph) [][]float64 {
-//	// Crear una matriz cuadrada para almacenar las distancias entre nodos
-//	numNodes := len(graph.Nodes)
-//	matrix := make([][]float64, numNodes)
-//	for i := 0; i < numNodes; i++ {
-//		matrix[i] = make([]float64, numNodes)
-//	}
-//
-//	// Inicializar la matriz con infinito para todas las distancias
-//	for i := 0; i < numNodes; i++ {
-//		for j := 0; j < numNodes; j++ {
-//			matrix[i][j] = math.Inf(1)
-//		}
-//	}
-//
-//	// Establecer la distancia cero para los nodos diagonales
-//	for i := 0; i < numNodes; i++ {
-//		matrix[i][i] = 0
-//	}
-//
-//	// Llenar la matriz con las distancias de las aristas existentes
-//	for _, edge := range graph.Edges {
-//		index1 := getNodeIndex(graph.Nodes, edge.Node1)
-//		index2 := getNodeIndex(graph.Nodes, edge.Node2)
-//		matrix[index1][index2] = 1
-//		matrix[index2][index1] = 1
-//	}
-//
-//	// Calcular las distancias mínimas utilizando el algoritmo de Floyd-Warshall
-//	for k := 0; k < numNodes; k++ {
-//		for i := 0; i < numNodes; i++ {
-//			for j := 0; j < numNodes; j++ {
-//				if matrix[i][j] > matrix[i][k]+matrix[k][j] {
-//					matrix[i][j] = matrix[i][k] + matrix[k][j]
-//				}
-//			}
-//		}
-//	}
-//
-//	return matrix
-//}
 
 // Función auxiliar para obtener el índice de un nodo en el slice de nodos
 func getNodeIndex(nodes Nodes, node string) int {
