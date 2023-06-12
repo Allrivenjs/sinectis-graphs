@@ -1,8 +1,7 @@
-package Graph
+package Types
 
 import (
 	"fmt"
-	"sinectis-graphs/Algorith"
 	"sort"
 	"strings"
 )
@@ -32,21 +31,6 @@ type Graph struct {
 
 type GraphMap map[string][]string
 
-func (edges *Edges) GetSimplePath(start string, end string) string {
-	path := edges.findSimplePath(start, end)
-	var SimplePath string
-	//
-	if path != nil {
-		// Imprimir el resultado
-		SimplePath += fmt.Sprintf("Camino simple\n")
-		SimplePath += fmt.Sprintf("C = {" + strings.Join(path, ", ") + "}")
-		// Aquí puedes agregar la longitud total del camino si proporcionas información sobre las distancias
-	} else {
-		SimplePath = fmt.Sprintf("No se encontró un camino simple entre las ciudades especificadas.")
-	}
-	return SimplePath
-}
-
 func (edges *Edges) IncidenceFunc() string {
 	incidenceFunction := "Funciones de incidencia:\nf(G) = {\n"
 	for _, edge := range *edges {
@@ -70,36 +54,8 @@ func (nodes *Nodes) GenerateVertexList() string {
 	return vertexList
 }
 
-// Función de búsqueda de camino simple
-func (edges *Edges) findSimplePath(start string, end string) []string {
-	graph := make(GraphMap)
-	for _, edge := range *edges {
-		graph[edge.Node1] = append(graph[edge.Node1], edge.Node2)
-		graph[edge.Node2] = append(graph[edge.Node2], edge.Node1)
-	}
-
-	visited := make(map[string]bool)
-	for vertex := range graph {
-		visited[vertex] = false
-	}
-
-	var path []string
-
-	if Algorith.Dfs(graph, start, end, visited, &path) {
-		result := make([]string, len(path)-1)
-
-		for i := 0; i < len(path)-1; i++ {
-			result[i] = fmt.Sprintf("(%s, %s)", path[i], path[i+1])
-		}
-
-		return result
-	}
-
-	return nil
-}
-
-func (nodes *Nodes) getIncidenceMatrix(edges *Edges) Algorith.IncidenceMatrix {
-	incidenceMatrix := make(Algorith.IncidenceMatrix, len(*nodes))
+func (nodes *Nodes) GetIncidenceMatrix(edges *Edges) IncidenceMatrix {
+	incidenceMatrix := make(IncidenceMatrix, len(*nodes))
 	for _, node := range *nodes {
 		row := make([]int, len(*edges))
 		for i, edge := range *edges {
@@ -114,7 +70,7 @@ func (nodes *Nodes) getIncidenceMatrix(edges *Edges) Algorith.IncidenceMatrix {
 	return incidenceMatrix
 }
 
-func (nodes *Nodes) uniqueStringsAndSort() Nodes {
+func (nodes *Nodes) UniqueStringsAndSort() Nodes {
 	encountered := make(map[string]bool)
 	result := make(Nodes, 0)
 

@@ -1,8 +1,7 @@
-package Algorith
+package Types
 
 import (
 	"fmt"
-	"sinectis-graphs/Graph"
 )
 
 type DegreeCounts map[string]int
@@ -20,7 +19,7 @@ type Html struct {
 	Table string `json:"table"`
 }
 
-func (h *Html) GenerateTableIncidenceMatrix(edges *Graph.Edges, incidenceMatrix IncidenceMatrix) {
+func (h *Html) GenerateTableIncidenceMatrix(edges *Edges, incidenceMatrix IncidenceMatrix) {
 	// Generar la tabla HTML
 	html := "<table border=\"1\" cellspacing=\"0\" cellpadding=\"5\">"
 	html += "<tr><th></th>"
@@ -44,6 +43,14 @@ func (h *Html) GenerateTableIncidenceMatrix(edges *Graph.Edges, incidenceMatrix 
 	// Imprimir la tabla HTML
 	//fmt.Println(html)
 	h.Table = html
+}
+
+func Sum(arr []int) int {
+	result := 0
+	for _, val := range arr {
+		result += val
+	}
+	return result
 }
 
 func (incidenceMatrix *IncidenceMatrix) CalculateDegreeCounts() DegreeCountsString {

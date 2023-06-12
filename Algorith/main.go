@@ -6,13 +6,56 @@ import (
 	"math"
 	"math/rand"
 	"regexp"
-	"sinectis-graphs/Graph"
+	"sinectis-graphs/Types"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func filterInput(e string) (Graph.Nodes, Graph.Edges) {
+// Función de búsqueda de camino simple
+func FindSimplePath(start string, end string, edges Types.Edges) []string {
+	graph := make(Types.GraphMap)
+	for _, edge := range edges {
+		graph[edge.Node1] = append(graph[edge.Node1], edge.Node2)
+		graph[edge.Node2] = append(graph[edge.Node2], edge.Node1)
+	}
+
+	visited := make(map[string]bool)
+	for vertex := range graph {
+		visited[vertex] = false
+	}
+
+	var path []string
+
+	if Dfs(graph, start, end, visited, &path) {
+		result := make([]string, len(path)-1)
+
+		for i := 0; i < len(path)-1; i++ {
+			result[i] = fmt.Sprintf("(%s, %s)", path[i], path[i+1])
+		}
+
+		return result
+	}
+
+	return nil
+}
+
+func GetSimplePath(start string, end string, edges Types.Edges) string {
+	path := FindSimplePath(start, end, edges)
+	var SimplePath string
+	//
+	if path != nil {
+		// Imprimir el resultado
+		SimplePath += fmt.Sprintf("Camino simple\n")
+		SimplePath += fmt.Sprintf("C = {" + strings.Join(path, ", ") + "}")
+		// Aquí puedes agregar la longitud total del camino si proporcionas información sobre las distancias
+	} else {
+		SimplePath = fmt.Sprintf("No se encontró un camino simple entre las ciudades especificadas.")
+	}
+	return SimplePath
+}
+
+func FilterInput(e string) (Types.Nodes, Types.Edges) {
 	//re := regexp.MustCompile(`/(\w+) *= *\(([^,]+), *([^)]+)\)/`)
 	e = strings.ReplaceAll(e, "\n", "")
 	re2 := regexp.MustCompile(`(\w+)\s*=\s*\(([^,]+),([^)]+)\)`)
@@ -22,11 +65,11 @@ func filterInput(e string) (Graph.Nodes, Graph.Edges) {
 		matches = re2.FindAllStringSubmatch(e, -1)
 	}
 	// Crear un slice de aristas y un slice de nodos
-	var edges Graph.Edges
-	nodes := make(Graph.Nodes, 0)
+	var edges Types.Edges
+	nodes := make(Types.Nodes, 0)
 	logrus.Println(matches)
 	for _, match := range matches {
-		edge := Graph.Edge{
+		edge := Types.Edge{
 			Id:    strings.TrimSpace(match[1]),
 			Node1: strings.TrimSpace(match[2]),
 			Node2: strings.TrimSpace(match[3]),
@@ -107,7 +150,7 @@ func Dijkstra(matrix [][]float64, start int) ([]float64, map[int][]int) {
 	return distances, paths
 }
 
-func FormatShortestPaths(distance []float64, path map[int][]int, startNode int, nodes Graph.Nodes) string {
+func FormatShortestPaths(distance []float64, path map[int][]int, startNode int, nodes Types.Nodes) string {
 
 	var formattedPaths strings.Builder
 
@@ -151,12 +194,12 @@ func ParseWeight(weighted string) float64 {
 	return weight
 }
 
-func CalculateDiameter(graph Graph.Graph) float64 {
+func CalculateDiameter(graph Types.Graph) float64 {
 	diameter := 0.0
 
 	for i := 0; i < len(graph.Nodes); i++ {
 		for j := i + 1; j < len(graph.Nodes); j++ {
-			distance := calculateShortestDistance(graph, graph.Nodes[i], graph.Nodes[j])
+			distance := CalculateShortestDistance(graph, graph.Nodes[i], graph.Nodes[j])
 			if distance > diameter {
 				diameter = distance
 			}
@@ -166,10 +209,10 @@ func CalculateDiameter(graph Graph.Graph) float64 {
 	return diameter
 }
 
-func FindGraphRadius(graph Graph.Graph, centerExcentricity float64) float64 {
+func FindGraphRadius(graph Types.Graph, centerExcentricity float64) float64 {
 	radius := math.Inf(1)
 	for _, vertex := range graph.Nodes {
-		excentricity := calculateExcentricity(graph, vertex)
+		excentricity := CalculateExcentricity(graph, vertex)
 		if excentricity == centerExcentricity && excentricity < radius {
 			radius = excentricity
 		}
@@ -178,13 +221,13 @@ func FindGraphRadius(graph Graph.Graph, centerExcentricity float64) float64 {
 	return radius
 }
 
-func FindGraphCenter(graph Graph.Graph) (string, float64, []string) {
+func FindGraphCenter(graph Types.Graph) (string, float64, []string) {
 	minExcentricity := math.Inf(1)
 	var centerVertex string
 	excentricities := []string{}
 
 	for _, vertex := range graph.Nodes {
-		excentricity := calculateExcentricity(graph, vertex)
+		excentricity := CalculateExcentricity(graph, vertex)
 		result := fmt.Sprintf("E(%s) = %.2f", vertex, excentricity)
 		excentricities = append(excentricities, result)
 
@@ -212,24 +255,24 @@ func GetMaxExcentricity(row []float64) float64 {
 	return maxExcentricity
 }
 
-func ParseFloatWeighted(edge Graph.Edge) (float64, error) {
+func ParseFloatWeighted(edge Types.Edge) (float64, error) {
 	weightedStr := strings.ReplaceAll(edge.Weighted, ",", ".")
 	return strconv.ParseFloat(weightedStr, 64)
 }
 
-func FindAllExcentricity(graph Graph.Graph, vertex string) ([]string, [][]float64) {
+func FindAllExcentricity(graph Types.Graph, vertex string) ([]string, [][]float64) {
 	var excentricities []string
 	var maxExcentricity float64
 	var excentricityMatrix [][]float64
 	var maxVertex string
 
 	for _, node := range graph.Nodes {
-		excentricity := calculateExcentricityForVertex(graph, vertex, node)
+		excentricity := CalculateExcentricityForVertex(graph, vertex, node)
 		if excentricity > maxExcentricity {
 			maxExcentricity = excentricity
 			maxVertex = vertex
 		}
-		result := formatExcentricity(node, vertex, excentricity)
+		result := FormatExcentricity(node, vertex, excentricity)
 		excentricities = append(excentricities, result)
 		excentricityRow := []float64{excentricity}
 		excentricityMatrix = append(excentricityMatrix, excentricityRow)
@@ -247,12 +290,12 @@ func FormatExcentricity(node string, vertex string, excentricity float64) string
 	return result
 }
 
-func CalculateExcentricity(graph Graph.Graph, vertex string) float64 {
+func CalculateExcentricity(graph Types.Graph, vertex string) float64 {
 	var maxDistance float64
 
 	for _, targetNode := range graph.Nodes {
 		if targetNode != vertex {
-			distance := calculateShortestDistance(graph, vertex, targetNode)
+			distance := CalculateShortestDistance(graph, vertex, targetNode)
 			if distance > maxDistance {
 				maxDistance = distance
 			}
@@ -262,12 +305,12 @@ func CalculateExcentricity(graph Graph.Graph, vertex string) float64 {
 	return maxDistance
 }
 
-func CalculateExcentricityForVertex(graph Graph.Graph, vertex, node string) float64 {
-	distance := calculateShortestDistance(graph, vertex, node)
+func CalculateExcentricityForVertex(graph Types.Graph, vertex, node string) float64 {
+	distance := CalculateShortestDistance(graph, vertex, node)
 	return distance
 }
 
-func CalculateShortestDistance(graph Graph.Graph, start, end string) float64 {
+func CalculateShortestDistance(graph Types.Graph, start, end string) float64 {
 	distances := make(map[string]float64)
 	for _, node := range graph.Nodes {
 		distances[node] = math.Inf(1)
@@ -287,7 +330,7 @@ func CalculateShortestDistance(graph Graph.Graph, start, end string) float64 {
 		for _, edge := range graph.Edges {
 			if edge.Node1 == current {
 				neighbor := edge.Node2
-				weight, err := parseFloatWeighted(edge)
+				weight, err := ParseFloatWeighted(edge)
 				if err != nil {
 					// Manejar el error si la conversión falla
 					logrus.Fatal(err)
@@ -301,7 +344,7 @@ func CalculateShortestDistance(graph Graph.Graph, start, end string) float64 {
 				}
 			} else if edge.Node2 == current {
 				neighbor := edge.Node1
-				weight, err := parseFloatWeighted(edge)
+				weight, err := ParseFloatWeighted(edge)
 				if err != nil {
 					// Manejar el error si la conversión falla
 					logrus.Fatal(err)
@@ -320,17 +363,17 @@ func CalculateShortestDistance(graph Graph.Graph, start, end string) float64 {
 	return math.Inf(1)
 }
 
-func GetAllPaths(graph Graph.Graph, start, end string) []string {
+func GetAllPaths(graph Types.Graph, start, end string) []string {
 	visited := make(map[string]bool)
 	var currentPath []string
 	var allPaths []string
 	var minLength = math.Inf(1)
 
-	findAllPaths(graph, start, end, visited, currentPath, &allPaths, &minLength)
+	FindAllPaths(graph, start, end, visited, currentPath, &allPaths, &minLength)
 	index = 0
 
 	for _, path := range allPaths {
-		if length := getPathLengthFromFormat(path); length < minLength {
+		if length := GetPathLengthFromFormat(path); length < minLength {
 			minLength = length
 		}
 	}
@@ -356,13 +399,13 @@ func GetPathLengthFromFormat(path string) float64 {
 	return length
 }
 
-func FindAllPaths(graph Graph.Graph, current, end string, visited map[string]bool, currentPath []string, allPaths *[]string, minLength *float64) {
+func FindAllPaths(graph Types.Graph, current, end string, visited map[string]bool, currentPath []string, allPaths *[]string, minLength *float64) {
 	visited[current] = true
 	currentPath = append(currentPath, current)
 
 	if current == end {
-		*allPaths = append(*allPaths, formatPath(currentPath, graph))
-		if length := calculatePathLength(currentPath, graph); length < *minLength {
+		*allPaths = append(*allPaths, FormatPath(currentPath, graph))
+		if length := CalculatePathLength(currentPath, graph); length < *minLength {
 			*minLength = length
 		}
 	} else {
@@ -370,12 +413,12 @@ func FindAllPaths(graph Graph.Graph, current, end string, visited map[string]boo
 			if edge.Node1 == current {
 				neighbor := edge.Node2
 				if !visited[neighbor] {
-					findAllPaths(graph, neighbor, end, visited, currentPath, allPaths, minLength)
+					FindAllPaths(graph, neighbor, end, visited, currentPath, allPaths, minLength)
 				}
 			} else if edge.Node2 == current {
 				neighbor := edge.Node1
 				if !visited[neighbor] {
-					findAllPaths(graph, neighbor, end, visited, currentPath, allPaths, minLength)
+					FindAllPaths(graph, neighbor, end, visited, currentPath, allPaths, minLength)
 				}
 			}
 		}
@@ -386,9 +429,9 @@ func FindAllPaths(graph Graph.Graph, current, end string, visited map[string]boo
 
 }
 
-func FormatPath(path []string, graph Graph.Graph) string {
+func FormatPath(path []string, graph Types.Graph) string {
 	//formattedPath := strings.Join(path, " -> ")
-	length := calculatePathLength(path, graph)
+	length := CalculatePathLength(path, graph)
 
 	result := fmt.Sprintf("CS%d: ", index+1)
 	for i := 0; i < len(path)-1; i++ {
@@ -407,7 +450,7 @@ func FormatPath(path []string, graph Graph.Graph) string {
 	return result
 }
 
-func CalculatePathLength(path []string, graph Graph.Graph) float64 {
+func CalculatePathLength(path []string, graph Types.Graph) float64 {
 	length := 0.0
 	for i := 0; i < len(path)-1; i++ {
 		node1 := path[i]
@@ -425,15 +468,15 @@ func CalculatePathLength(path []string, graph Graph.Graph) float64 {
 	return length
 }
 
-func DistanceMatrix(graph Graph.Graph) [][]float64 {
+func DistanceMatrix(graph Types.Graph) [][]float64 {
 	numNodes := len(graph.Nodes)
-	matrix := initializeMatrix(numNodes)
-	matrix = setDiagonalZeros(matrix)
-	fillMatrixWithEdges(matrix, graph.Edges, graph.Nodes, -1)
+	matrix := InitializeMatrix(numNodes)
+	matrix = SetDiagonalZeros(matrix)
+	FillMatrixWithEdges(matrix, graph.Edges, graph.Nodes, -1)
 	return matrix
 }
 
-func FormatMatrixAsHTMLTable(matrix [][]float64, nodes Graph.Nodes, list bool) string {
+func FormatMatrixAsHTMLTable(matrix [][]float64, nodes Types.Nodes, list bool) string {
 	var sb strings.Builder
 
 	sb.WriteString("<style>table, th, td {\n  border: 1px solid;\n} td, th {\npadding: 2px;\n}</style><table style='border-collapse: collapse;'>")
@@ -505,20 +548,20 @@ func InitMatrixInf(matrix [][]float64) [][]float64 {
 	return matrix
 }
 
-func FillMatrixWithEdges(matrix [][]float64, edges Graph.Edges, nodes Graph.Nodes, startNode int) ([]float64, map[int][]int) {
+func FillMatrixWithEdges(matrix [][]float64, edges Types.Edges, nodes Types.Nodes, startNode int) ([]float64, map[int][]int) {
 	nodeIndex := make(map[string]int)
 	for i, node := range nodes {
 		nodeIndex[node] = i
 	}
 
 	// Inicializar todas las distancias con Infinito
-	matrix = initMatrixInf(matrix)
+	matrix = InitMatrixInf(matrix)
 
 	// Asignar las distancias entre nodos vecinos
 	for _, edge := range edges {
 		node1 := nodeIndex[edge.Node1]
 		node2 := nodeIndex[edge.Node2]
-		weighted, err := parseFloatWeighted(edge)
+		weighted, err := ParseFloatWeighted(edge)
 		if err != nil {
 			// Manejar el error si la conversión falla
 			logrus.Fatal(err)
@@ -532,10 +575,10 @@ func FillMatrixWithEdges(matrix [][]float64, edges Graph.Edges, nodes Graph.Node
 	var p map[int][]int
 	if startNode == -1 {
 		for i := 0; i < len(matrix); i++ {
-			dijkstra(matrix, i)
+			Dijkstra(matrix, i)
 		}
 	} else {
-		d, p = dijkstra(matrix, startNode)
+		d, p = Dijkstra(matrix, startNode)
 	}
 	return d, p
 }
@@ -553,7 +596,7 @@ func MinDistance(distances []float64, visited []bool) int {
 }
 
 // Función auxiliar para obtener el índice de un nodo en el slice de nodos
-func GetNodeIndex(nodes Graph.Nodes, node string) int {
+func GetNodeIndex(nodes Types.Nodes, node string) int {
 	for i, n := range nodes {
 		if n == node {
 			return i
@@ -562,11 +605,11 @@ func GetNodeIndex(nodes Graph.Nodes, node string) int {
 	return -1
 }
 
-func FusionVertices(graph Graph.Graph, vertexA string, vertexB string) Graph.Graph {
+func FusionVertices(graph Types.Graph, vertexA string, vertexB string) Types.Graph {
 	// Crear un nuevo grafo para almacenar el resultado de la fusión
-	mergedGraph := Graph{
-		Nodes: make(Nodes, 0),
-		Edges: make(Edges, 0),
+	mergedGraph := Types.Graph{
+		Nodes: make(Types.Nodes, 0),
+		Edges: make(Types.Edges, 0),
 	}
 
 	// Copiar los nodos del grafo original excepto los vértices fusionados
@@ -584,7 +627,7 @@ func FusionVertices(graph Graph.Graph, vertexA string, vertexB string) Graph.Gra
 	}
 
 	// Crear una nueva arista que conecte los vértices fusionados en el nuevo vértice
-	mergedEdge := Edge{
+	mergedEdge := Types.Edge{
 		Id:    "merged",
 		Node1: vertexA,
 		Node2: vertexB,
@@ -597,9 +640,9 @@ func FusionVertices(graph Graph.Graph, vertexA string, vertexB string) Graph.Gra
 	return mergedGraph
 }
 
-func BuildGraph(edges Graph.Edges) Graph.Graph {
-	graph := Graph{
-		Nodes: Nodes{},
+func BuildGraph(edges Types.Edges) Types.Graph {
+	graph := Types.Graph{
+		Nodes: Types.Nodes{},
 		Edges: edges,
 	}
 
@@ -616,10 +659,10 @@ func BuildGraph(edges Graph.Edges) Graph.Graph {
 	return graph
 }
 
-func ExtractSubgraph(graph Graph.Graph, subGraphNodes []string) Graph.Graph {
-	subGraph := Graph{
-		Nodes: make([]string, 0),
-		Edges: make([]Edge, 0),
+func ExtractSubgraph(graph Types.Graph, subGraphNodes []string) Types.Graph {
+	subGraph := Types.Graph{
+		Nodes: make(Types.Nodes, 0),
+		Edges: make([]Types.Edge, 0),
 	}
 
 	nodeSet := make(map[string]bool)
@@ -642,17 +685,17 @@ func ExtractSubgraph(graph Graph.Graph, subGraphNodes []string) Graph.Graph {
 	return subGraph
 }
 
-func ExtractRandomSubgraph(graph Graph.Graph, numNodes int) Graph.Graph {
-	subgraphNodes := getRandomNodes(graph, numNodes)
+func ExtractRandomSubgraph(graph Types.Graph, numNodes int) Types.Graph {
+	subgraphNodes := GetRandomNodes(graph, numNodes)
 	fmt.Printf("nodes %v \n", subgraphNodes)
-	return extractSubgraph(graph, subgraphNodes)
+	return ExtractSubgraph(graph, subgraphNodes)
 }
 
-func GetRandomNodes(graph Graph.Graph, numNodes int) Graph.Nodes {
+func GetRandomNodes(graph Types.Graph, numNodes int) Types.Nodes {
 	rand.Seed(time.Now().UnixNano())
 
 	// Obtener todos los nodos disponibles en el grafo
-	availableNodes := make(Nodes, len(graph.Nodes))
+	availableNodes := make(Types.Nodes, len(graph.Nodes))
 	copy(availableNodes, graph.Nodes)
 
 	// Verificar si el número de nodos solicitados es mayor que el número total de nodos disponibles
@@ -661,7 +704,7 @@ func GetRandomNodes(graph Graph.Graph, numNodes int) Graph.Nodes {
 	}
 
 	// Elegir nodos aleatorios
-	randomNodes := make(Nodes, 0, numNodes)
+	randomNodes := make(Types.Nodes, 0, numNodes)
 	for i := 0; i < numNodes; i++ {
 		randomIndex := rand.Intn(len(availableNodes))
 		randomNode := availableNodes[randomIndex]
@@ -674,7 +717,7 @@ func GetRandomNodes(graph Graph.Graph, numNodes int) Graph.Nodes {
 	return randomNodes
 }
 
-func Contains(list Graph.Nodes, element string) bool {
+func Contains(list Types.Nodes, element string) bool {
 	for _, item := range list {
 		if item == element {
 			return true
@@ -684,7 +727,7 @@ func Contains(list Graph.Nodes, element string) bool {
 }
 
 // Calcular la cantidad de grados de cada vértice
-func CalculateDegree(graph Graph.GraphMap) map[string]int {
+func CalculateDegree(graph Types.GraphMap) map[string]int {
 	degree := make(map[string]int)
 
 	for node, neighbors := range graph {
@@ -694,16 +737,8 @@ func CalculateDegree(graph Graph.GraphMap) map[string]int {
 	return degree
 }
 
-func Sum(arr []int) int {
-	result := 0
-	for _, val := range arr {
-		result += val
-	}
-	return result
-}
-
 // Función de búsqueda en profundidad (DFS)
-func Dfs(graph Graph.GraphMap, start string, end string, visited map[string]bool, path *[]string) bool {
+func Dfs(graph Types.GraphMap, start string, end string, visited map[string]bool, path *[]string) bool {
 	visited[start] = true
 	*path = append(*path, start)
 
@@ -713,7 +748,7 @@ func Dfs(graph Graph.GraphMap, start string, end string, visited map[string]bool
 
 	for _, neighbor := range graph[start] {
 		if !visited[neighbor] {
-			if dfs(graph, neighbor, end, visited, path) {
+			if Dfs(graph, neighbor, end, visited, path) {
 				return true
 			}
 		}

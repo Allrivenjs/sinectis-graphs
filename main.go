@@ -2,14 +2,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 	"reflect"
-	"sinectis-graphs/Graph"
+	"sinectis-graphs/Algorith"
+	"sinectis-graphs/Types"
 )
-
-type Nodes = Graph.Nodes
-type Edges = Graph.Edges
-type Edge = Graph.Edge
 
 type Request struct {
 	Vertex   string      `json:"vertex"`
@@ -19,14 +17,14 @@ type Request struct {
 }
 
 type GraphResponse struct {
-	Graph             Graph.Graph        `json:"graph"`
-	IncidenceMatrix   IncidenceMatrix    `json:"incidenceMatrix"`
-	IncidenceFunction string             `json:"incidenceFunction"`
-	VertexList        string             `json:"vertexList"`
-	DegreeCounts      DegreeCountsString `json:"degreeCounts"`
-	Html              Html               `json:"html"`
-	SimplePath        string             `json:"simplePath"`
-	SubGraph          []Graph.Graph      `json:"subGraph"`
+	Graph             Types.Graph              `json:"graph"`
+	IncidenceMatrix   Types.IncidenceMatrix    `json:"incidenceMatrix"`
+	IncidenceFunction string                   `json:"incidenceFunction"`
+	VertexList        string                   `json:"vertexList"`
+	DegreeCounts      Types.DegreeCountsString `json:"degreeCounts"`
+	Html              Types.Html               `json:"html"`
+	SimplePath        string                   `json:"simplePath"`
+	SubGraph          []Types.Graph            `json:"subGraph"`
 }
 
 func startA(r Request) GraphResponse {
@@ -34,26 +32,26 @@ func startA(r Request) GraphResponse {
 	// Extraer las funciones de incidencia
 
 	// Crear un slice de aristas y un slice de nodos
-	edges := make(Edges, 0)
-	nodes := make(Nodes, 0)
+	edges := make(Types.Edges, 0)
+	nodes := make(Types.Nodes, 0)
 
-	nodes, edges = filterInput(r.Vertex)
+	nodes, edges = Algorith.FilterInput(r.Vertex)
 
 	//// Encuentra un camino simple entre las ciudades
-	simplePath := edges.GetSimplePath(r.Start, r.End)
+	simplePath := Algorith.GetSimplePath(r.Start, r.End, edges)
 
 	// Eliminar duplicados de nodos y ordenar alfabéticamente
-	nodes = nodes.uniqueStringsAndSort()
+	nodes = nodes.UniqueStringsAndSort()
 
 	// Crear matriz de incidencia
-	incidenceMatrix := nodes.getIncidenceMatrix(&edges)
+	incidenceMatrix := nodes.GetIncidenceMatrix(&edges)
 
 	// Imprimir la matriz de incidencia
 	//for node, row := range incidenceMatrix {
 	//	fmt.Printf("%s: %v\n", node, row)
 	//}
 
-	var html Html
+	var html Types.Html
 
 	html.GenerateTableIncidenceMatrix(&edges, incidenceMatrix)
 
@@ -70,23 +68,23 @@ func startA(r Request) GraphResponse {
 	degreeCounts := incidenceMatrix.CalculateDegreeCounts()
 	//fmt.Println(degreeCounts)
 
-	graph := buildGraph(edges)
-	subgraph := make([]Graph.Graph, 2)
+	graph := Algorith.BuildGraph(edges)
+	subgraph := make([]Types.Graph, 2)
 	subGraphType := reflect.TypeOf(r.SubGraph).Kind()
 	//fmt.Println(subGraphType)
 	switch subGraphType {
 	case reflect.Array:
-		var n Nodes
+		var n Types.Nodes
 		for _, node := range r.SubGraph.([]string) {
 			n = append(n, node)
 		}
 		for i := range subgraph {
-			subgraph[i] = extractSubgraph(graph, n)
+			subgraph[i] = Algorith.ExtractSubgraph(graph, n)
 		}
 
 	case reflect.Float64:
 		for i := range subgraph {
-			subgraph[i] = extractRandomSubgraph(graph, int(r.SubGraph.(float64)))
+			subgraph[i] = Algorith.ExtractRandomSubgraph(graph, int(r.SubGraph.(float64)))
 		}
 	}
 
@@ -103,7 +101,7 @@ func startA(r Request) GraphResponse {
 }
 
 type RequestGraph struct {
-	Graph Graph.Graph `json:"graph"`
+	Graph Types.Graph `json:"graph"`
 }
 
 type RequestLength struct {
@@ -151,8 +149,8 @@ func main() {
 			})
 		}
 
-		matrix := distanceMatrix(request.Graph)
-		tableHTML := formatMatrixAsHTMLTable(matrix, request.Graph.Nodes, false)
+		matrix := Algorith.DistanceMatrix(request.Graph)
+		tableHTML := Algorith.FormatMatrixAsHTMLTable(matrix, request.Graph.Nodes, false)
 
 		return c.SendString(tableHTML)
 	})
@@ -170,9 +168,9 @@ func main() {
 			})
 		}
 
-		excentricity, excentricityMatrix := findAllExcentricity(request.Graph, request.Start)
-		htmlTable := formatMatrixAsHTMLTable(excentricityMatrix, request.Graph.Nodes, true)
-		length := getAllPaths(request.Graph, request.Start, request.End)
+		excentricity, excentricityMatrix := Algorith.FindAllExcentricity(request.Graph, request.Start)
+		htmlTable := Algorith.FormatMatrixAsHTMLTable(excentricityMatrix, request.Graph.Nodes, true)
+		length := Algorith.GetAllPaths(request.Graph, request.Start, request.End)
 		//logrus.Println(length, excentricity, table)
 		return c.JSON(fiber.Map{
 			"length": length,
@@ -196,9 +194,9 @@ func main() {
 				"message": "El campo 'request' no puede estar vacío",
 			})
 		}
-		center, min, list := findGraphCenter(request.Graph)
-		radio := findGraphRadius(request.Graph, min)
-		diametro := calculateDiameter(request.Graph)
+		center, min, list := Algorith.FindGraphCenter(request.Graph)
+		radio := Algorith.FindGraphRadius(request.Graph, min)
+		diametro := Algorith.CalculateDiameter(request.Graph)
 		return c.JSON(fiber.Map{
 			"center":   center,
 			"radio":    radio,
@@ -225,18 +223,18 @@ func main() {
 		//formatShortestPaths(distances, paths, request.Start)
 
 		numNodes := len(request.Graph.Nodes)
-		matrix := initializeMatrix(numNodes)
-		matrix = setDiagonalZeros(matrix)
-		index = getIndex(request.Start, request.Graph.Nodes)
+		matrix := Algorith.InitializeMatrix(numNodes)
+		matrix = Algorith.SetDiagonalZeros(matrix)
+		index := Algorith.GetIndex(request.Start, request.Graph.Nodes)
 
-		d, p := fillMatrixWithEdges(matrix, request.Graph.Edges, request.Graph.Nodes, index)
+		d, p := Algorith.FillMatrixWithEdges(matrix, request.Graph.Edges, request.Graph.Nodes, index)
 
 		// Calcular el número medio de enlaces
 		size := len(d)
-		averageLinks := calculateAverageLinks(d, size)
+		averageLinks := Algorith.CalculateAverageLinks(d, size)
 		logrus.Println(averageLinks)
 		return c.JSON(fiber.Map{
-			"matrix":        formatShortestPaths(d, p, index, request.Graph.Nodes),
+			"matrix":        Algorith.FormatShortestPaths(d, p, index, request.Graph.Nodes),
 			"average_links": fmt.Sprintf("El número medio de enlaces que un paquete tiene que atravesar (en promedio) es: %v", averageLinks),
 		})
 		//return c.SendString(formatShortestPaths(d, p, index, request.Graph.Nodes))
